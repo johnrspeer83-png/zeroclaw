@@ -71,3 +71,6 @@ rust_out
 
 # Auto-generated Tauri schemas
 apps/tauri/gen/schemas/
+
+# Working/planning docs (per-build, do not commit)
+PLAN-*.md
