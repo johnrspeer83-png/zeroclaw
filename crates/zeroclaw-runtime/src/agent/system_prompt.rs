@@ -19,7 +19,24 @@ fn load_openclaw_bootstrap_files(
         "The following workspace files define your identity, behavior, and context. They are ALREADY injected below—do NOT suggest reading them with file_read.\n\n",
     );
 
-    let bootstrap_files = ["AGENTS.md", "SOUL.md", "TOOLS.md", "IDENTITY.md", "USER.md"];
+    // Includes HEARTBEAT.md (downstream agents like Vigil define scheduled
+    // monitoring procedures here). Kept consistent with
+    // `crate::agent::personality::PERSONALITY_FILES` so the system-prompt
+    // path (cron, channel orchestrator) and the SystemPromptBuilder path
+    // (agent.rs) inject the same set of identity files. Previously the two
+    // lists diverged — system_prompt.rs omitted HEARTBEAT.md, which meant
+    // cron prompts that referenced "Run the heartbeat checklist defined in
+    // HEARTBEAT.md" reached the model with no HEARTBEAT.md content in
+    // context. The model would then either fabricate a generic checklist
+    // or admit it had no access — both wrong.
+    let bootstrap_files = [
+        "AGENTS.md",
+        "SOUL.md",
+        "TOOLS.md",
+        "IDENTITY.md",
+        "USER.md",
+        "HEARTBEAT.md",
+    ];
 
     for filename in &bootstrap_files {
         inject_workspace_file(prompt, workspace_dir, filename, max_chars_per_file);
@@ -385,5 +402,78 @@ fn inject_workspace_file(
             // Missing-file marker (matches OpenClaw behavior)
             let _ = writeln!(prompt, "### {filename}\n\n[File not found: {filename}]\n");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pin the bootstrap-file list shape so the system-prompt path does not
+    /// silently diverge from `crate::agent::personality::PERSONALITY_FILES`.
+    ///
+    /// Downstream agents (Vigil, in particular) write scheduled monitoring
+    /// procedures to HEARTBEAT.md and reference the file by name in their
+    /// cron prompts ("Run the heartbeat checklist defined in HEARTBEAT.md").
+    /// If HEARTBEAT.md is excluded from the bootstrap list, the model
+    /// receives the cron prompt with no HEARTBEAT.md content in context
+    /// and either fabricates a generic checklist or says it cannot find
+    /// the file. Vigil hit this on 2026-05-24 after the Phase 3 model swap
+    /// to Mistral made the silent-truncation failure mode visible.
+    #[test]
+    fn bootstrap_files_include_heartbeat_md() {
+        let dir = std::env::temp_dir().join(format!(
+            "system_prompt_bootstrap_test_{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("HEARTBEAT.md"),
+            "# Heartbeat\n\nSTEP 1 of 6: do the thing.\n",
+        )
+        .unwrap();
+
+        let mut prompt = String::new();
+        load_openclaw_bootstrap_files(&mut prompt, &dir, BOOTSTRAP_MAX_CHARS);
+
+        assert!(
+            prompt.contains("### HEARTBEAT.md"),
+            "load_openclaw_bootstrap_files must inject `### HEARTBEAT.md`; \
+             absent here means the bootstrap list was edited to drop \
+             HEARTBEAT.md and downstream cron agents will silently lose \
+             their procedural checklist. Full prompt was:\n{prompt}",
+        );
+        assert!(
+            prompt.contains("STEP 1 of 6: do the thing."),
+            "load_openclaw_bootstrap_files must inject HEARTBEAT.md body, \
+             not just the heading. Full prompt was:\n{prompt}",
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Pin the SOUL.md and IDENTITY.md presence too, so a future edit
+    /// to load_openclaw_bootstrap_files cannot silently drop foundational
+    /// files. HEARTBEAT.md is covered above; this test catches deletions
+    /// of the other identity files in the same change.
+    #[test]
+    fn bootstrap_files_include_soul_and_identity() {
+        let dir = std::env::temp_dir().join(format!(
+            "system_prompt_bootstrap_soul_test_{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("SOUL.md"), "soul body").unwrap();
+        std::fs::write(dir.join("IDENTITY.md"), "identity body").unwrap();
+
+        let mut prompt = String::new();
+        load_openclaw_bootstrap_files(&mut prompt, &dir, BOOTSTRAP_MAX_CHARS);
+
+        assert!(prompt.contains("### SOUL.md"));
+        assert!(prompt.contains("soul body"));
+        assert!(prompt.contains("### IDENTITY.md"));
+        assert!(prompt.contains("identity body"));
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
