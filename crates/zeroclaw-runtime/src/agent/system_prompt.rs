@@ -15,6 +15,20 @@ fn load_openclaw_bootstrap_files(
     workspace_dir: &std::path::Path,
     max_chars_per_file: usize,
 ) {
+    // === PHASE 4.1 DIAGNOSTIC (Vigil) ===
+    // Confirm this function actually runs and that the workspace_dir we
+    // see matches what we expect. Will be stripped once we have the answer.
+    let heartbeat_path = workspace_dir.join("HEARTBEAT.md");
+    tracing::warn!(
+        target: "vigil_diag",
+        workspace = %workspace_dir.display(),
+        heartbeat_path = %heartbeat_path.display(),
+        heartbeat_exists = heartbeat_path.exists(),
+        heartbeat_readable = std::fs::read_to_string(&heartbeat_path)
+            .map(|s| s.len()).unwrap_or(0),
+        "PHASE_4_1_DIAG load_openclaw_bootstrap_files entry"
+    );
+
     prompt.push_str(
         "The following workspace files define your identity, behavior, and context. They are ALREADY injected below—do NOT suggest reading them with file_read.\n\n",
     );
@@ -351,6 +365,26 @@ pub fn build_system_prompt_with_mode_and_autonomy(
         prompt.truncate(end);
         prompt.push_str("\n\n[System prompt truncated to fit context budget]\n");
     }
+
+    // === PHASE 4.1 DIAGNOSTIC (Vigil) ===
+    // Logs the final shape of the system prompt that build_system_prompt_with_mode_and_autonomy
+    // returns, so we can confirm whether HEARTBEAT.md actually ended up in the
+    // outgoing system message. Will be stripped once we have the answer.
+    tracing::warn!(
+        target: "vigil_diag",
+        chars = prompt.len(),
+        workspace = %workspace_dir.display(),
+        has_heartbeat_section = prompt.contains("### HEARTBEAT.md"),
+        has_heartbeat_step1 = prompt.contains("STEP 1 of 6"),
+        has_soul_section = prompt.contains("### SOUL.md"),
+        has_vigil_identity = prompt.contains("You are **Vigil**"),
+        has_identity_section = prompt.contains("### IDENTITY.md"),
+        max_system_prompt_chars,
+        bootstrap_max_chars,
+        native_tools,
+        truncated = (max_system_prompt_chars > 0 && prompt.len() >= max_system_prompt_chars),
+        "PHASE_4_1_DIAG built system prompt"
+    );
 
     if prompt.is_empty() {
         "You are ZeroClaw, a fast and efficient AI assistant built in Rust. Be helpful, concise, and direct."
