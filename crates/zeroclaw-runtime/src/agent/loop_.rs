@@ -2420,7 +2420,21 @@ pub async fn run(
     } else {
         None
     };
-    let native_tools = provider.supports_native_tools();
+    // Honor `[agent] tool_dispatcher` config when deciding whether the
+    // system prompt is built native-style. The dispatcher itself already
+    // honors this at `agent::Agent::from_config`; mirroring the same
+    // precedence here keeps the system prompt aligned with the wire
+    // protocol the dispatcher is using. Previously this read
+    // `provider.supports_native_tools()` directly, which caused XML
+    // protocol instructions to be injected into the system prompt even
+    // when the dispatcher was forced to native mode — conflicting
+    // protocol guidance that small models like Mistral 24B Q8 cannot
+    // reconcile and fall back to chat-mode prose. See Phase 5 in
+    // `CLAUDE.md` of the downstream `agent-ai` repo for the diagnostic.
+    let native_tools = crate::agent::dispatcher::effective_native_tools(
+        &config.agent.tool_dispatcher,
+        provider.supports_native_tools(),
+    );
     let mut system_prompt = crate::agent::system_prompt::build_system_prompt_with_mode_and_autonomy(
         &config.workspace_dir,
         &model_name,
@@ -3339,7 +3353,13 @@ pub async fn process_message(
     } else {
         None
     };
-    let native_tools = provider.supports_native_tools();
+    // See Phase 5 comment at the sibling call site in this file for why
+    // this routes through effective_native_tools rather than reading
+    // provider.supports_native_tools() directly.
+    let native_tools = crate::agent::dispatcher::effective_native_tools(
+        &config.agent.tool_dispatcher,
+        provider.supports_native_tools(),
+    );
     let mut system_prompt = crate::agent::system_prompt::build_system_prompt_with_mode_and_autonomy(
         &config.workspace_dir,
         &model_name,

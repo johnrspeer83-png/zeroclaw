@@ -5327,7 +5327,19 @@ pub async fn start_channels(config: Config) -> Result<()> {
     } else {
         None
     };
-    let native_tools = provider.supports_native_tools();
+    // Phase 5 (2026-05-26): honor `[agent] tool_dispatcher` config when
+    // deciding whether the system prompt is built native-style. See the
+    // matching call sites in `crates/zeroclaw-runtime/src/agent/loop_.rs`
+    // (and the function-level docstring on `effective_native_tools`) for
+    // the full rationale. Without this, the channel orchestrator's
+    // outgoing system prompt embeds XML `<tool_call>` protocol
+    // instructions even when the dispatcher is forced to native mode,
+    // which conflicts with the tools-as-native-API-parameter wire shape
+    // the dispatcher is actually using.
+    let native_tools = zeroclaw_runtime::agent::dispatcher::effective_native_tools(
+        &config.agent.tool_dispatcher,
+        provider.supports_native_tools(),
+    );
     let mut system_prompt = build_system_prompt_with_mode_and_autonomy(
         &workspace,
         &model,
