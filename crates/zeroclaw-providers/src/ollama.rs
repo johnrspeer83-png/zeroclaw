@@ -9,9 +9,31 @@ use std::collections::HashMap;
 
 /// Default `num_ctx` (context window, in tokens) sent in every Ollama
 /// `/api/chat` request when no operator override is supplied. Ollama's
-/// server-side default is 2048, which silently truncates prompts; we set
-/// 8192 so callers get useful context without per-call configuration.
-pub const OLLAMA_DEFAULT_NUM_CTX: u32 = 8192;
+/// server-side default is 2048, which silently truncates prompts.
+///
+/// Bumped from 8192 to 32768 in Phase 6 (2026-05-27) after the downstream
+/// Vigil agent demonstrated empirically that a 61K-char personality +
+/// skills + tools system prompt (~17K tokens) was being silently
+/// truncated to fit `num_ctx = 8192`, slicing off the `## Project Context`
+/// block and causing Mistral Small 3.1 24B Q8 to fall back to generic
+/// chatbot responses with zero tool calls. Verified via direct curl
+/// against the same model: `num_ctx = 8192` returns "I'm a text-based AI
+/// model designed to assist..." (no Vigil identity), `num_ctx = 32768`
+/// with the identical prompt + the same 7 native tool schemas returns
+/// `message.tool_calls = [{name: "vigil-mcp__query_proxmox_vms", ...}]`.
+///
+/// 32K is enough headroom for: a multi-section system prompt with
+/// personality bundle + skill bodies + tool descriptions (real-world
+/// observed ~17K tokens), plus the user message, plus generous response
+/// budget. VRAM cost: ~6 GB KV cache for a 24B Q8 model with GQA
+/// (vs ~1.5 GB at 8192) — fits comfortably on V100 32GB or larger.
+/// Smaller models pay proportionally less.
+///
+/// Operators on tight VRAM budgets can still pin a lower value via
+/// `ollama_num_ctx` in `[providers.models.<name>]` config. This default
+/// is meant as a no-config-needed sweet spot for the model classes
+/// (24-30B at Q4-Q8) most users actually deploy.
+pub const OLLAMA_DEFAULT_NUM_CTX: u32 = 32768;
 
 /// Default `num_predict` (max output tokens) sent in every Ollama
 /// `/api/chat` request when no operator override is supplied. Ollama's
@@ -1079,7 +1101,7 @@ mod tests {
         let json = serde_json::to_value(request).unwrap();
         assert!(json.get("think").is_none());
         let options = json.get("options").expect("options present");
-        assert_eq!(options.get("num_ctx"), Some(&serde_json::json!(8192)));
+        assert_eq!(options.get("num_ctx"), Some(&serde_json::json!(32768)));
         assert_eq!(options.get("num_predict"), Some(&serde_json::json!(2048)));
     }
 
@@ -1102,7 +1124,7 @@ mod tests {
         let json = serde_json::to_value(request).unwrap();
         assert_eq!(json.get("think"), Some(&serde_json::json!(false)));
         let options = json.get("options").expect("options present");
-        assert_eq!(options.get("num_ctx"), Some(&serde_json::json!(8192)));
+        assert_eq!(options.get("num_ctx"), Some(&serde_json::json!(32768)));
         assert_eq!(options.get("num_predict"), Some(&serde_json::json!(2048)));
     }
 
@@ -1125,7 +1147,7 @@ mod tests {
         let json = serde_json::to_value(request).unwrap();
         let options = json.get("options").expect("options present");
         assert_eq!(options.get("temperature"), Some(&serde_json::json!(0.2)));
-        assert_eq!(options.get("num_ctx"), Some(&serde_json::json!(8192)));
+        assert_eq!(options.get("num_ctx"), Some(&serde_json::json!(32768)));
         assert_eq!(options.get("num_predict"), Some(&serde_json::json!(2048)));
     }
 
