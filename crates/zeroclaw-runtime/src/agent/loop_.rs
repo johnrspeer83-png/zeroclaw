@@ -2435,6 +2435,11 @@ pub async fn run(
         &config.agent.tool_dispatcher,
         provider.supports_native_tools(),
     );
+    // Phase 9-A (2026-05-29): procedural mode swaps the framework's
+    // `## CRITICAL: No Tool Narration` opener for a `## Execution Mode:
+    // Procedural` block that explicitly requires step-by-step tool_call
+    // emission. See `AgentConfig::system_prompt_mode` for full motivation.
+    let procedural_mode = config.agent.system_prompt_mode == "procedural";
     let mut system_prompt = crate::agent::system_prompt::build_system_prompt_with_mode_and_autonomy(
         &config.workspace_dir,
         &model_name,
@@ -2447,6 +2452,7 @@ pub async fn run(
         config.skills.prompt_injection_mode,
         config.agent.compact_context,
         config.agent.max_system_prompt_chars,
+        procedural_mode,
     );
 
     // Append structured tool-use instructions with schemas (only for non-native providers)
@@ -3360,6 +3366,8 @@ pub async fn process_message(
         &config.agent.tool_dispatcher,
         provider.supports_native_tools(),
     );
+    // See Phase 9-A comment at the sibling call site for the procedural-mode rationale.
+    let procedural_mode = config.agent.system_prompt_mode == "procedural";
     let mut system_prompt = crate::agent::system_prompt::build_system_prompt_with_mode_and_autonomy(
         &config.workspace_dir,
         &model_name,
@@ -3372,6 +3380,7 @@ pub async fn process_message(
         config.skills.prompt_injection_mode,
         config.agent.compact_context,
         config.agent.max_system_prompt_chars,
+        procedural_mode,
     );
     if !native_tools {
         system_prompt.push_str(&build_tool_instructions(&tools_registry));

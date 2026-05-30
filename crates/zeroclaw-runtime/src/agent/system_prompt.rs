@@ -116,6 +116,7 @@ pub fn build_system_prompt_with_mode(
         skills_prompt_mode,
         false,
         0,
+        false,
     )
 }
 
@@ -132,22 +133,54 @@ pub fn build_system_prompt_with_mode_and_autonomy(
     skills_prompt_mode: zeroclaw_config::schema::SkillsPromptInjectionMode,
     compact_context: bool,
     max_system_prompt_chars: usize,
+    procedural_mode: bool,
 ) -> String {
     use std::fmt::Write;
     let mut prompt = String::with_capacity(8192);
 
-    // ── 0. Anti-narration (top priority) ───────────────────────
-    prompt.push_str(
-        "## CRITICAL: No Tool Narration\n\n\
-         NEVER narrate, announce, describe, or explain your tool usage to the user. \
-         Do NOT say things like 'Let me check...', 'I will use http_request to...', \
-         'I'll fetch that for you', 'Searching now...', or 'Using the web_search tool'. \
-         The user must ONLY see the final answer. Tool calls are invisible infrastructure — \
-         never reference them. If you catch yourself starting a sentence about what tool \
-         you are about to use or just used, DELETE it and give the answer directly.\n\n",
-    );
+    // ── 0. Execution-mode opener (top priority) ─────────────────
+    //
+    // Conversational mode (the framework default) injects the
+    // `## CRITICAL: No Tool Narration` block: tool calls are invisible
+    // infrastructure, the user only sees the final answer. Right for
+    // chat agents.
+    //
+    // Procedural mode skips that block and instead injects a
+    // `## Execution Mode: Procedural` block requiring the agent to
+    // emit each tool_call BEFORE producing analysis text and to never
+    // fabricate step output. Right for autonomous agents executing
+    // multi-step procedures (monitoring heartbeats, scheduled
+    // checklists). Added 2026-05-29 — see the procedural-mode bullet
+    // on `AgentConfig::system_prompt_mode` for the empirical
+    // motivation (Vigil's Phase 8 corpus rewrite proved the framework
+    // anti-narration directive was too loud for prompt-level
+    // workarounds to overcome).
+    if procedural_mode {
+        prompt.push_str(
+            "## Execution Mode: Procedural\n\n\
+             You are an autonomous agent executing a multi-step procedure. \
+             For each step defined in your workspace files (HEARTBEAT.md, AGENTS.md, the user's directive):\n\
+             1. Emit a `tool_call` FIRST — before any analysis text for that step.\n\
+             2. Wait for the `tool_result` to be returned to you as a tool message.\n\
+             3. Analyze the result, then proceed to the next step's `tool_call`.\n\n\
+             The step-by-step execution IS the deliverable. Tool emissions are NOT invisible infrastructure in procedural mode — they ARE the work.\n\n\
+             You may only report what an actual `tool_result` returned. \
+             If you did not emit a `tool_call` for a step, you do NOT have that step's data. \
+             Fabricating plausible numbers in place of an unmade tool call is forbidden and will be detected.\n\n",
+        );
+    } else {
+        prompt.push_str(
+            "## CRITICAL: No Tool Narration\n\n\
+             NEVER narrate, announce, describe, or explain your tool usage to the user. \
+             Do NOT say things like 'Let me check...', 'I will use http_request to...', \
+             'I'll fetch that for you', 'Searching now...', or 'Using the web_search tool'. \
+             The user must ONLY see the final answer. Tool calls are invisible infrastructure — \
+             never reference them. If you catch yourself starting a sentence about what tool \
+             you are about to use or just used, DELETE it and give the answer directly.\n\n",
+        );
+    }
 
-    // ── 0b. Tool Honesty ───────────────────────────────────────
+    // ── 0b. Tool Honesty (BOTH modes; no-fabrication is universal) ──
     prompt.push_str(
         "## CRITICAL: Tool Honesty\n\n\
          - NEVER fabricate, invent, or guess tool results. If a tool returns empty results, say \"No results found.\"\n\
@@ -195,7 +228,23 @@ pub fn build_system_prompt_with_mode_and_autonomy(
     }
 
     // ── 1c. Action instruction (avoid meta-summary) ───────────────
-    if native_tools {
+    //
+    // Procedural mode swaps the "give the FINAL ANSWER only" framing
+    // (which directly conflicts with HEARTBEAT.md / AGENTS.md style
+    // step-by-step procedures) for a directive that explicitly
+    // requires step-by-step tool emission. See the `## Execution Mode`
+    // block above for the motivation.
+    if procedural_mode {
+        prompt.push_str(
+            "## Your Task\n\n\
+             You are running an autonomous procedure (cron job, scheduled task, multi-step checklist). \
+             Follow the procedure step-by-step:\n\
+             - Emit `tool_call`s explicitly per the procedure.\n\
+             - Wait for each `tool_result` before proceeding to the next step.\n\
+             - The step-by-step structure IS the deliverable — do not collapse it into a single final answer.\n\n\
+             If the same agent receives an interactive query (Discord direct message, ad-hoc operator question), respond naturally and use tools as needed — but the procedural cron path is always step-by-step.\n\n",
+        );
+    } else if native_tools {
         prompt.push_str(
             "## Your Task\n\n\
              When the user sends a message, respond naturally. Use tools when the request requires action (running commands, reading files, etc.).\n\
@@ -408,6 +457,120 @@ fn inject_workspace_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Convenience: build a prompt with all the boilerplate parameters
+    /// defaulted, varying only the `procedural_mode` flag. Used by the
+    /// Phase 9-A tests below.
+    fn build_minimal_prompt(procedural_mode: bool) -> String {
+        let tmp =
+            std::env::temp_dir().join(format!("system_prompt_mode_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let prompt = build_system_prompt_with_mode_and_autonomy(
+            &tmp,
+            "test-model",
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            true, // native_tools
+            zeroclaw_config::schema::SkillsPromptInjectionMode::Full,
+            false, // compact_context
+            0,     // max_system_prompt_chars (unlimited)
+            procedural_mode,
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+        prompt
+    }
+
+    /// Phase 9-A: default behavior (procedural_mode = false) must keep
+    /// the framework `## CRITICAL: No Tool Narration` opener. This
+    /// pins the conversational-mode contract so future edits cannot
+    /// accidentally remove the anti-narration directive from the
+    /// default code path that all upstream users rely on.
+    #[test]
+    fn conversational_mode_injects_no_tool_narration_block() {
+        let prompt = build_minimal_prompt(false);
+        assert!(
+            prompt.contains("## CRITICAL: No Tool Narration"),
+            "conversational mode must inject the anti-narration block"
+        );
+        assert!(
+            !prompt.contains("## Execution Mode: Procedural"),
+            "conversational mode must NOT inject the procedural opener"
+        );
+        // Tool Honesty block must be present in BOTH modes.
+        assert!(
+            prompt.contains("## CRITICAL: Tool Honesty"),
+            "Tool Honesty block must be present in conversational mode"
+        );
+    }
+
+    /// Phase 9-A: when `procedural_mode = true`, the opener swaps to
+    /// `## Execution Mode: Procedural` and the anti-narration block
+    /// is suppressed. The Tool Honesty block (no-fabrication on tool
+    /// results) is preserved because it is universally correct.
+    ///
+    /// This is the load-bearing test for Phase 9-A's claim: setting
+    /// the config knob actually changes the prompt shape.
+    #[test]
+    fn procedural_mode_swaps_to_execution_mode_block() {
+        let prompt = build_minimal_prompt(true);
+        assert!(
+            prompt.contains("## Execution Mode: Procedural"),
+            "procedural mode must inject the Execution Mode opener"
+        );
+        assert!(
+            !prompt.contains("## CRITICAL: No Tool Narration"),
+            "procedural mode must NOT inject the anti-narration block — \
+             that block is what was suppressing tool emission on \
+             downstream procedural agents (see Vigil's Phase 8 audit)"
+        );
+        // The procedural opener must include the literal anti-fabrication
+        // directive so the downstream agent's prompt corpus can rely on
+        // it being present at top-of-prompt position.
+        assert!(
+            prompt.contains("Fabricating plausible numbers"),
+            "procedural opener must explicitly forbid fabrication"
+        );
+        assert!(
+            prompt.contains("Emit a `tool_call` FIRST"),
+            "procedural opener must require tool_call emission before \
+             analysis text"
+        );
+        // Tool Honesty must still be present.
+        assert!(
+            prompt.contains("## CRITICAL: Tool Honesty"),
+            "Tool Honesty block must be present in procedural mode too"
+        );
+    }
+
+    /// Phase 9-A: the `## Your Task` block also swaps in procedural mode
+    /// (the conversational version says "give the FINAL ANSWER only"
+    /// which directly conflicts with HEARTBEAT.md-style step procedures).
+    #[test]
+    fn procedural_mode_your_task_block_is_procedural() {
+        let prompt = build_minimal_prompt(true);
+        // Procedural opener for ## Your Task must be present.
+        assert!(
+            prompt.contains("running an autonomous procedure"),
+            "procedural mode's ## Your Task must frame the agent as \
+             running an autonomous procedure"
+        );
+        assert!(
+            prompt.contains("step-by-step structure IS the deliverable"),
+            "procedural mode's ## Your Task must affirm that step-by-step \
+             structure is the deliverable (not noise to suppress)"
+        );
+        // Conversational meta-suppression must NOT be present.
+        assert!(
+            !prompt.contains("step-by-step meta-commentary"),
+            "procedural mode must NOT include the conversational \
+             'Do NOT output step-by-step meta-commentary' directive — \
+             that's what the audit identified as load-bearing for the \
+             fabrication failure mode"
+        );
+    }
 
     /// Pin the bootstrap-file list shape so the system-prompt path does not
     /// silently diverge from `crate::agent::personality::PERSONALITY_FILES`.

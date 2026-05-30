@@ -1468,6 +1468,36 @@ pub struct AgentConfig {
     /// Tool dispatch strategy (e.g. `"auto"`). Default: `"auto"`.
     #[serde(default = "default_agent_tool_dispatcher")]
     pub tool_dispatcher: String,
+    /// System prompt mode: `"conversational"` (default) or `"procedural"`.
+    ///
+    /// Controls which framework header blocks are injected at the top of
+    /// the system prompt by
+    /// `crate::agent::system_prompt::build_system_prompt_with_mode_and_autonomy`.
+    ///
+    /// `"conversational"` (the framework default): injects the
+    /// `## CRITICAL: No Tool Narration` block and a "respond naturally,
+    /// give the FINAL ANSWER only" framing in `## Your Task`. Right for
+    /// chat agents where step-by-step tool emissions are hidden
+    /// infrastructure the user does not need to see.
+    ///
+    /// `"procedural"`: skips the anti-narration block and the
+    /// "give the FINAL ANSWER only" framing; injects a procedural
+    /// `## Execution Mode` block that explicitly requires the agent to
+    /// emit each `tool_call` BEFORE producing analysis text for the
+    /// step and to never fabricate step output. Right for autonomous
+    /// agents executing multi-step procedures (monitoring heartbeats,
+    /// scheduled checklists, ETL pipelines) where the step-by-step
+    /// execution IS the deliverable.
+    ///
+    /// The `## CRITICAL: Tool Honesty` block (no-fabrication on tool
+    /// results) is injected in BOTH modes — it's universally correct.
+    ///
+    /// Added 2026-05-29 by the downstream Vigil agent after Phase 8
+    /// confirmed empirically that prompt-corpus changes alone cannot
+    /// overcome the framework's hardcoded anti-narration header.
+    /// Worth upstreaming.
+    #[serde(default = "default_agent_system_prompt_mode")]
+    pub system_prompt_mode: String,
     /// Tools exempt from the within-turn duplicate-call dedup check. Default: `[]`.
     #[serde(default)]
     pub tool_call_dedup_exempt: Vec<String>,
@@ -1552,6 +1582,10 @@ fn default_agent_tool_dispatcher() -> String {
     "auto".into()
 }
 
+fn default_agent_system_prompt_mode() -> String {
+    "conversational".into()
+}
+
 fn default_max_system_prompt_chars() -> usize {
     0
 }
@@ -1565,6 +1599,7 @@ impl Default for AgentConfig {
             max_context_tokens: default_agent_max_context_tokens(),
             parallel_tools: false,
             tool_dispatcher: default_agent_tool_dispatcher(),
+            system_prompt_mode: default_agent_system_prompt_mode(),
             tool_call_dedup_exempt: Vec::new(),
             tool_filter_groups: Vec::new(),
             max_system_prompt_chars: default_max_system_prompt_chars(),

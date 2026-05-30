@@ -5340,6 +5340,10 @@ pub async fn start_channels(config: Config) -> Result<()> {
         &config.agent.tool_dispatcher,
         provider.supports_native_tools(),
     );
+    // Phase 9-A (2026-05-29): channel orchestrator honors `[agent] system_prompt_mode`
+    // the same way the agent loop does. See the procedural-mode docstring on
+    // `AgentConfig::system_prompt_mode` for full motivation.
+    let procedural_mode = config.agent.system_prompt_mode == "procedural";
     let mut system_prompt = build_system_prompt_with_mode_and_autonomy(
         &workspace,
         &model,
@@ -5352,6 +5356,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
         config.skills.prompt_injection_mode,
         config.agent.compact_context,
         config.agent.max_system_prompt_chars,
+        procedural_mode,
     );
     if !native_tools {
         system_prompt.push_str(&build_tool_instructions(tools_registry.as_ref()));
@@ -9280,6 +9285,7 @@ BTC is currently around $65,000 based on latest tool output."#
             zeroclaw_config::schema::SkillsPromptInjectionMode::Full,
             false,
             0,
+            false,
         );
 
         assert!(
@@ -9311,6 +9317,7 @@ BTC is currently around $65,000 based on latest tool output."#
             zeroclaw_config::schema::SkillsPromptInjectionMode::Full,
             false,
             0,
+            false,
         );
 
         assert!(
