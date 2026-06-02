@@ -650,6 +650,9 @@ pub async fn agent_turn(
     activated_tools: Option<&std::sync::Arc<std::sync::Mutex<crate::tools::ActivatedToolSet>>>,
     model_switch_callback: Option<ModelSwitchCallback>,
     channel: Option<&dyn Channel>,
+    // Vigil Phase 9-E: forwarded to `run_tool_call_loop`. See the param
+    // docstring on `run_tool_call_loop::effective_use_native_tools`.
+    effective_use_native_tools: bool,
 ) -> Result<String> {
     run_tool_call_loop(
         provider,
@@ -679,6 +682,7 @@ pub async fn agent_turn(
         channel,
         None, // receipt_generator
         None, // collected_receipts
+        effective_use_native_tools,
     )
     .await
 }
@@ -846,6 +850,17 @@ pub async fn run_tool_call_loop(
     channel: Option<&dyn Channel>,
     receipt_generator: Option<&crate::agent::tool_receipts::ReceiptGenerator>,
     collected_receipts: Option<&std::sync::Mutex<Vec<String>>>,
+    // Vigil Phase 9-E: Whether to send `tools[]` natively in the provider
+    // chat request. Computed via `dispatcher::effective_native_tools` at
+    // each call site so the gate honors `[agent] tool_dispatcher = "native"`
+    // even when `provider.supports_native_tools()` conservatively returns
+    // false (notably `OllamaProvider`). Without this, the cron path on the
+    // Vigil agent silently sent `tools: None` to Ollama, causing Mistral to
+    // emit fenced-JSON tool-call mimicry as assistant text instead of using
+    // the native `message.tool_calls[]` channel. See dispatcher.rs docstring
+    // and Phase 5 commit (fix(system_prompt): honor [agent] tool_dispatcher)
+    // for the parallel patch on system-prompt builder sites.
+    effective_use_native_tools: bool,
 ) -> Result<String> {
     let max_iterations = if max_tool_iterations == 0 {
         DEFAULT_MAX_TOOL_ITERATIONS
@@ -970,7 +985,10 @@ pub async fn run_tool_call_loop(
                 }
             }
         }
-        let use_native_tools = provider.supports_native_tools() && !tool_specs.is_empty();
+        // Vigil Phase 9-E: gate native-tools request on the caller-resolved
+        // value, not provider.supports_native_tools() alone. See parameter
+        // docstring on `effective_use_native_tools` above.
+        let use_native_tools = effective_use_native_tools && !tool_specs.is_empty();
 
         let image_marker_count = multimodal::count_image_markers(history);
 
@@ -2614,6 +2632,7 @@ pub async fn run(
                         None, // channel: CLI mode — uses prompt_cli
                         None, // receipt_generator
                         None, // collected_receipts
+                        native_tools, // Vigil Phase 9-E
                     ),
                 )
                 .await
@@ -2926,6 +2945,7 @@ pub async fn run(
                             None, // channel: interactive CLI — uses prompt_cli
                             None, // receipt_generator
                             None, // collected_receipts
+                            native_tools, // Vigil Phase 9-E
                         ),
                     )
                     .await
@@ -3472,6 +3492,7 @@ pub async fn process_message(
         activated_handle_pm.as_ref(),
         None,
         None, // channel: process_message path has no channel ref
+        native_tools, // Vigil Phase 9-E: honor [agent] tool_dispatcher in request gate
     )
     .await
 }
@@ -4612,6 +4633,7 @@ mod tests {
             None, // channel
             None, // receipt_generator
             None, // collected_receipts
+            false, // Vigil Phase 9-E (test default: provider-supports semantics)
         )
         .await
         .expect_err("provider without vision support should fail");
@@ -4670,6 +4692,7 @@ mod tests {
             None, // channel
             None, // receipt_generator
             None, // collected_receipts
+            false, // Vigil Phase 9-E (test default: provider-supports semantics)
         )
         .await
         .expect_err("oversized payload must fail");
@@ -4722,6 +4745,7 @@ mod tests {
             None, // channel
             None, // receipt_generator
             None, // collected_receipts
+            false, // Vigil Phase 9-E (test default: provider-supports semantics)
         )
         .await
         .expect("valid multimodal payload should pass");
@@ -4773,6 +4797,7 @@ mod tests {
             None, // channel
             None, // receipt_generator
             None, // collected_receipts
+            false, // Vigil Phase 9-E (test default: provider-supports semantics)
         )
         .await
         .expect_err("should fail without vision_provider config");
@@ -4831,6 +4856,7 @@ mod tests {
             None, // channel
             None, // receipt_generator
             None, // collected_receipts
+            false, // Vigil Phase 9-E (test default: provider-supports semantics)
         )
         .await
         .expect_err("should fail when vision provider cannot be created");
@@ -4889,6 +4915,7 @@ mod tests {
             None, // channel
             None, // receipt_generator
             None, // collected_receipts
+            false, // Vigil Phase 9-E (test default: provider-supports semantics)
         )
         .await
         .expect("text-only messages should succeed with default provider");
@@ -4948,6 +4975,7 @@ mod tests {
             None, // channel
             None, // receipt_generator
             None, // collected_receipts
+            false, // Vigil Phase 9-E (test default: provider-supports semantics)
         )
         .await
         .expect_err("should fail due to nonexistent vision provider");
@@ -5005,6 +5033,7 @@ mod tests {
             None, // channel
             None, // receipt_generator
             None, // collected_receipts
+            false, // Vigil Phase 9-E (test default: provider-supports semantics)
         )
         .await
         .expect("empty image markers should not trigger vision routing");
@@ -5062,6 +5091,7 @@ mod tests {
             None, // channel
             None, // receipt_generator
             None, // collected_receipts
+            false, // Vigil Phase 9-E (test default: provider-supports semantics)
         )
         .await
         .expect_err("should attempt vision provider creation for multiple images");
@@ -5202,6 +5232,7 @@ mod tests {
             None, // channel
             None, // receipt_generator
             None, // collected_receipts
+            false, // Vigil Phase 9-E (test default: provider-supports semantics)
         )
         .await
         .expect("parallel execution should complete");
@@ -5282,6 +5313,7 @@ mod tests {
             None, // channel
             None, // receipt_generator
             None, // collected_receipts
+            false, // Vigil Phase 9-E (test default: provider-supports semantics)
         )
         .await
         .expect("cron_add delivery defaults should be injected");
@@ -5354,6 +5386,7 @@ mod tests {
             None, // channel
             None, // receipt_generator
             None, // collected_receipts
+            false, // Vigil Phase 9-E (test default: provider-supports semantics)
         )
         .await
         .expect("explicit delivery mode should be preserved");
@@ -5421,6 +5454,7 @@ mod tests {
             None, // channel
             None, // receipt_generator
             None, // collected_receipts
+            false, // Vigil Phase 9-E (test default: provider-supports semantics)
         )
         .await
         .expect("loop should finish after deduplicating repeated calls");
@@ -5501,6 +5535,7 @@ mod tests {
             None, // channel
             None, // receipt_generator
             None, // collected_receipts
+            false, // Vigil Phase 9-E (test default: provider-supports semantics)
         )
         .await
         .expect("non-interactive shell should succeed for low-risk command");
@@ -5571,6 +5606,7 @@ mod tests {
             None, // channel
             None, // receipt_generator
             None, // collected_receipts
+            false, // Vigil Phase 9-E (test default: provider-supports semantics)
         )
         .await
         .expect("loop should finish with exempt tool executing twice");
@@ -5661,6 +5697,7 @@ mod tests {
             None, // channel
             None, // receipt_generator
             None, // collected_receipts
+            false, // Vigil Phase 9-E (test default: provider-supports semantics)
         )
         .await
         .expect("loop should complete");
@@ -5725,6 +5762,7 @@ mod tests {
             None, // channel
             None, // receipt_generator
             None, // collected_receipts
+            false, // Vigil Phase 9-E (test default: provider-supports semantics)
         )
         .await
         .expect("native fallback id flow should complete");
@@ -5816,6 +5854,7 @@ mod tests {
             None, // channel
             None, // receipt_generator
             None, // collected_receipts
+            false, // Vigil Phase 9-E (test default: provider-supports semantics)
         )
         .await
         .expect("native tool-call text should be relayed through on_delta");
@@ -5884,6 +5923,7 @@ mod tests {
             None, // channel
             None, // receipt_generator
             None, // collected_receipts
+            false, // Vigil Phase 9-E (test default: provider-supports semantics)
         )
         .await
         .expect("streaming provider should complete");
@@ -5955,6 +5995,7 @@ mod tests {
             None, // channel
             None, // receipt_generator
             None, // collected_receipts
+            false, // Vigil Phase 9-E (test default: provider-supports semantics)
         )
         .await
         .expect("streaming tool loop should execute tool and finish");
@@ -6033,6 +6074,7 @@ mod tests {
             None, // channel
             None, // receipt_generator
             None, // collected_receipts
+            false, // Vigil Phase 9-E (test default: provider-supports semantics)
         )
         .await
         .expect("native streaming events should preserve tool loop semantics");
@@ -6120,6 +6162,7 @@ mod tests {
             None, // channel
             None, // receipt_generator
             None, // collected_receipts
+            false, // Vigil Phase 9-E (test default: provider-supports semantics)
         )
         .await
         .expect("routed streaming provider should complete");
@@ -6204,6 +6247,7 @@ mod tests {
                 Some(&activated),
                 None,
                 None, // channel
+                false, // Vigil Phase 9-E (test default)
             )
             .await
             .expect("wrapper path should execute activated tools");
@@ -7219,6 +7263,7 @@ Let me check the result."#;
             None, // channel
             None, // receipt_generator
             None, // collected_receipts
+            false, // Vigil Phase 9-E (test default: provider-supports semantics)
         )
         .await
         .expect("tool loop should complete");
@@ -7381,6 +7426,7 @@ Let me check the result."#;
                     None, // channel
                     None, // receipt_generator
                     None, // collected_receipts
+                    false, // Vigil Phase 9-E (test default)
                 ),
             )
             .await
@@ -7469,6 +7515,7 @@ Let me check the result."#;
                     None, // channel
                     None, // receipt_generator
                     None, // collected_receipts
+                    false, // Vigil Phase 9-E (test default)
                 ),
             )
             .await
@@ -7530,6 +7577,7 @@ Let me check the result."#;
             None, // channel
             None, // receipt_generator
             None, // collected_receipts
+            false, // Vigil Phase 9-E (test default: provider-supports semantics)
         )
         .await
         .expect("should succeed without cost scope");
@@ -7575,5 +7623,159 @@ Let me check the result."#;
             \n  web_search: zc-receipt-200-bbb\
             \n  file_read: zc-receipt-300-ccc";
         assert_eq!(result, expected);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Vigil Phase 9-E: `run_tool_call_loop` honors the caller-resolved
+    // `effective_use_native_tools` gate even when the provider's own
+    // `supports_native_tools()` returns false. This wire-shape test would
+    // have caught the original Vigil cron-path bug, where Phase 5 patched
+    // the system-prompt builders to honor `[agent] tool_dispatcher = "native"`
+    // but left the request-tools gate inside `run_tool_call_loop` reading
+    // the bare `provider.supports_native_tools()` (line 973 / 1002), so
+    // every cron tick on Mistral-via-Ollama silently sent `tools: None` to
+    // the provider. See `dispatcher::effective_native_tools` for the
+    // truth-table that callers compose against.
+    // ─────────────────────────────────────────────────────────────────────
+
+    struct ToolPresenceCapturingProvider {
+        captured_tools_some: Arc<Mutex<Option<bool>>>,
+        responses: Mutex<VecDeque<ChatResponse>>,
+        supports_native: bool,
+    }
+
+    impl ToolPresenceCapturingProvider {
+        fn new(supports_native: bool, captured: Arc<Mutex<Option<bool>>>) -> Self {
+            let mut q = VecDeque::new();
+            q.push_back(ChatResponse {
+                text: Some("done".into()),
+                tool_calls: Vec::new(),
+                usage: None,
+                reasoning_content: None,
+            });
+            Self {
+                captured_tools_some: captured,
+                responses: Mutex::new(q),
+                supports_native,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Provider for ToolPresenceCapturingProvider {
+        fn capabilities(&self) -> ProviderCapabilities {
+            ProviderCapabilities {
+                native_tool_calling: self.supports_native,
+                ..ProviderCapabilities::default()
+            }
+        }
+
+        async fn chat_with_system(
+            &self,
+            _system_prompt: Option<&str>,
+            _message: &str,
+            _model: &str,
+            _temperature: f64,
+        ) -> anyhow::Result<String> {
+            anyhow::bail!("chat_with_system should not be used in this test");
+        }
+
+        async fn chat(
+            &self,
+            request: ChatRequest<'_>,
+            _model: &str,
+            _temperature: f64,
+        ) -> anyhow::Result<ChatResponse> {
+            // Record on first observed call.
+            let mut slot = self.captured_tools_some.lock().expect("lock");
+            if slot.is_none() {
+                let has_tools = request.tools.is_some_and(|t| !t.is_empty());
+                *slot = Some(has_tools);
+            }
+            self.responses
+                .lock()
+                .expect("lock")
+                .pop_front()
+                .ok_or_else(|| anyhow::anyhow!("provider responses exhausted"))
+        }
+    }
+
+    async fn run_loop_capturing_tools(
+        provider_supports_native: bool,
+        effective_use_native_tools: bool,
+    ) -> bool {
+        let captured: Arc<Mutex<Option<bool>>> = Arc::new(Mutex::new(None));
+        let provider =
+            ToolPresenceCapturingProvider::new(provider_supports_native, Arc::clone(&captured));
+        let invocations = Arc::new(AtomicUsize::new(0));
+        let tools_registry: Vec<Box<dyn Tool>> =
+            vec![Box::new(CountingTool::new("phase9e_probe", invocations))];
+        let mut history = vec![
+            ChatMessage::system("test-system"),
+            ChatMessage::user("probe"),
+        ];
+        let observer = NoopObserver;
+        let _ = run_tool_call_loop(
+            &provider,
+            &mut history,
+            &tools_registry,
+            &observer,
+            "mock-provider",
+            "mock-model",
+            0.0,
+            true,
+            None,
+            "cli",
+            None,
+            &zeroclaw_config::schema::MultimodalConfig::default(),
+            2,
+            None,
+            None,
+            None,
+            &[],
+            &[],
+            None,
+            None,
+            &zeroclaw_config::schema::PacingConfig::default(),
+            0,
+            0,
+            None,
+            None,
+            None,
+            None,
+            effective_use_native_tools,
+        )
+        .await;
+        captured.lock().expect("lock").unwrap_or(false)
+    }
+
+    #[tokio::test]
+    async fn phase_9e_gate_sends_tools_when_caller_overrides_provider_false() {
+        // Vigil cron-path scenario: OllamaProvider hardcodes
+        // supports_native_tools() = false, but `[agent] tool_dispatcher = "native"`
+        // means the caller has already computed effective_use_native_tools = true.
+        // The loop MUST send tools[] in this case — that was the silent bug.
+        let observed = run_loop_capturing_tools(false, true).await;
+        assert!(
+            observed,
+            "Phase 9-E gate: when caller resolved effective_use_native_tools=true \
+             (e.g. via [agent] tool_dispatcher = \"native\"), run_tool_call_loop \
+             must populate tools[] on the provider chat request even if \
+             provider.supports_native_tools() returns false"
+        );
+    }
+
+    #[tokio::test]
+    async fn phase_9e_gate_omits_tools_when_caller_resolves_false() {
+        // Symmetric: when effective_use_native_tools=false the loop MUST NOT
+        // pass tools[]; the dispatcher is expected to emit XML protocol
+        // guidance instead via the system prompt.
+        let observed = run_loop_capturing_tools(true, false).await;
+        assert!(
+            !observed,
+            "Phase 9-E gate: when caller resolved effective_use_native_tools=false \
+             the loop must NOT populate tools[] (provider.supports_native_tools() \
+             alone is no longer the gate)"
+        );
     }
 }

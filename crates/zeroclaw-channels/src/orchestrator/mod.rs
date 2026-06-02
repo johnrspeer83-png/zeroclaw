@@ -3016,6 +3016,15 @@ async fn process_channel_message(
             state.prices,
         )
     });
+    // Vigil Phase 9-E: resolve native-tools gate for run_tool_call_loop. See
+    // the parameter docstring on `run_tool_call_loop::effective_use_native_tools`
+    // and the parallel computation site at line 5339 (start_channels) for the
+    // system-prompt builder. Both paths must agree or the model receives a
+    // native-style prompt with no tools[] schema (or vice versa).
+    let effective_use_native_tools = zeroclaw_runtime::agent::dispatcher::effective_native_tools(
+        &ctx.prompt_config.agent.tool_dispatcher,
+        active_provider.supports_native_tools(),
+    );
     let llm_call_start = Instant::now();
     #[allow(clippy::cast_possible_truncation)]
     let elapsed_before_llm_ms = started_at.elapsed().as_millis() as u64;
@@ -3066,6 +3075,7 @@ async fn process_channel_message(
                         target_channel.as_deref(),
                         None, // receipt_generator
                         None, // collected_receipts
+                        effective_use_native_tools, // Vigil Phase 9-E
                     ),
                     ),
                     ),

@@ -1178,6 +1178,11 @@ impl DelegateTool {
                 None, // channel: delegate subagents don't support approval
                 None, // receipt_generator
                 None, // collected_receipts
+                // Vigil Phase 9-E: subagents respect provider capability only.
+                // Delegate doesn't currently have agent-config dispatcher
+                // override scope; provider.supports_native_tools() preserves
+                // pre-9-E behavior for this call site.
+                provider.supports_native_tools(),
             ),
         )
         .await;
