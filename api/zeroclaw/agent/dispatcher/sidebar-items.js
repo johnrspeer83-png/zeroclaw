@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["effective_native_tools"],"struct":["NativeToolDispatcher","ParsedToolCall","ToolExecutionResult","XmlToolDispatcher"],"trait":["ToolDispatcher"]};

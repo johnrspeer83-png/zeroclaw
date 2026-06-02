@@ -1,0 +1,26 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Default `num_ctx` (context window, in tokens) sent in every Ollama `/api/chat` request when no operator override is supplied. Ollama’s server-side default is 2048, which silently truncates prompts."><title>OLLAMA_DEFAULT_NUM_CTX in zeroclaw::providers::ollama - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-17e0aaed.css"><script id="default-settings" 
+data-use_system_theme="false"
+data-theme="ayu"></script><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="zeroclaw" data-themes="" data-resource-suffix="" data-rustdoc-version="1.96.0 (ac68faa20 2026-05-25)" data-channel="1.96.0" data-search-js="search-b5634cc7.js" data-stringdex-js="stringdex-2da4960a.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="sidebar-items.js"></script><script defer src="../../../static.files/main-5013f961.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc constant"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">OLLAMA_DEFAULT_NUM_CTX</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../../zeroclaw/index.html">zeroclaw</a><span class="version">0.7.3</span></h2></div><div class="sidebar-elems"><div id="rustdoc-modnav"><h2><a href="index.html">In zeroclaw::<wbr>providers::<wbr>ollama</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../../index.html">zeroclaw</a>::<wbr><a href="../index.html">providers</a>::<wbr><a href="index.html">ollama</a></div><h1>Constant <span class="constant">OLLAMA_<wbr>DEFAULT_<wbr>NUM_<wbr>CTX</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../src/zeroclaw_providers/ollama.rs.html#36">Source</a> </span></div><pre class="rust item-decl"><code>pub const OLLAMA_DEFAULT_NUM_CTX: <a class="primitive" href="https://doc.rust-lang.org/1.96.0/std/primitive.u32.html">u32</a> = 32768; // 32_768u32</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Default <code>num_ctx</code> (context window, in tokens) sent in every Ollama
+<code>/api/chat</code> request when no operator override is supplied. Ollama’s
+server-side default is 2048, which silently truncates prompts.</p>
+<p>Bumped from 8192 to 32768 in Phase 6 (2026-05-27) after the downstream
+Vigil agent demonstrated empirically that a 61K-char personality +
+skills + tools system prompt (~17K tokens) was being silently
+truncated to fit <code>num_ctx = 8192</code>, slicing off the <code>## Project Context</code>
+block and causing Mistral Small 3.1 24B Q8 to fall back to generic
+chatbot responses with zero tool calls. Verified via direct curl
+against the same model: <code>num_ctx = 8192</code> returns “I’m a text-based AI
+model designed to assist…” (no Vigil identity), <code>num_ctx = 32768</code>
+with the identical prompt + the same 7 native tool schemas returns
+<code>message.tool_calls = [{name: "vigil-mcp__query_proxmox_vms", ...}]</code>.</p>
+<p>32K is enough headroom for: a multi-section system prompt with
+personality bundle + skill bodies + tool descriptions (real-world
+observed ~17K tokens), plus the user message, plus generous response
+budget. VRAM cost: ~6 GB KV cache for a 24B Q8 model with GQA
+(vs ~1.5 GB at 8192) — fits comfortably on V100 32GB or larger.
+Smaller models pay proportionally less.</p>
+<p>Operators on tight VRAM budgets can still pin a lower value via
+<code>ollama_num_ctx</code> in <code>[providers.models.&lt;name&gt;]</code> config. This default
+is meant as a no-config-needed sweet spot for the model classes
+(24-30B at Q4-Q8) most users actually deploy.</p>
+</div></details></section></div></main></body></html>
