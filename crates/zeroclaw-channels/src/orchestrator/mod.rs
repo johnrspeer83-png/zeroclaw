@@ -3016,6 +3016,15 @@ async fn process_channel_message(
             state.prices,
         )
     });
+    // Vigil Phase 9-E: resolve native-tools gate for run_tool_call_loop. See
+    // the parameter docstring on `run_tool_call_loop::effective_use_native_tools`
+    // and the parallel computation site at line 5339 (start_channels) for the
+    // system-prompt builder. Both paths must agree or the model receives a
+    // native-style prompt with no tools[] schema (or vice versa).
+    let effective_use_native_tools = zeroclaw_runtime::agent::dispatcher::effective_native_tools(
+        &ctx.prompt_config.agent.tool_dispatcher,
+        active_provider.supports_native_tools(),
+    );
     let llm_call_start = Instant::now();
     #[allow(clippy::cast_possible_truncation)]
     let elapsed_before_llm_ms = started_at.elapsed().as_millis() as u64;
@@ -3066,6 +3075,7 @@ async fn process_channel_message(
                         target_channel.as_deref(),
                         None, // receipt_generator
                         None, // collected_receipts
+                        effective_use_native_tools, // Vigil Phase 9-E
                     ),
                     ),
                     ),
@@ -5327,7 +5337,23 @@ pub async fn start_channels(config: Config) -> Result<()> {
     } else {
         None
     };
-    let native_tools = provider.supports_native_tools();
+    // Phase 5 (2026-05-26): honor `[agent] tool_dispatcher` config when
+    // deciding whether the system prompt is built native-style. See the
+    // matching call sites in `crates/zeroclaw-runtime/src/agent/loop_.rs`
+    // (and the function-level docstring on `effective_native_tools`) for
+    // the full rationale. Without this, the channel orchestrator's
+    // outgoing system prompt embeds XML `<tool_call>` protocol
+    // instructions even when the dispatcher is forced to native mode,
+    // which conflicts with the tools-as-native-API-parameter wire shape
+    // the dispatcher is actually using.
+    let native_tools = zeroclaw_runtime::agent::dispatcher::effective_native_tools(
+        &config.agent.tool_dispatcher,
+        provider.supports_native_tools(),
+    );
+    // Phase 9-A (2026-05-29): channel orchestrator honors `[agent] system_prompt_mode`
+    // the same way the agent loop does. See the procedural-mode docstring on
+    // `AgentConfig::system_prompt_mode` for full motivation.
+    let procedural_mode = config.agent.system_prompt_mode == "procedural";
     let mut system_prompt = build_system_prompt_with_mode_and_autonomy(
         &workspace,
         &model,
@@ -5340,6 +5366,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
         config.skills.prompt_injection_mode,
         config.agent.compact_context,
         config.agent.max_system_prompt_chars,
+        procedural_mode,
     );
     if !native_tools {
         system_prompt.push_str(&build_tool_instructions(tools_registry.as_ref()));
@@ -9268,6 +9295,7 @@ BTC is currently around $65,000 based on latest tool output."#
             zeroclaw_config::schema::SkillsPromptInjectionMode::Full,
             false,
             0,
+            false,
         );
 
         assert!(
@@ -9299,6 +9327,7 @@ BTC is currently around $65,000 based on latest tool output."#
             zeroclaw_config::schema::SkillsPromptInjectionMode::Full,
             false,
             0,
+            false,
         );
 
         assert!(

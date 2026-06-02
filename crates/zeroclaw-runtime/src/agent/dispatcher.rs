@@ -26,6 +26,39 @@ pub trait ToolDispatcher: Send + Sync {
     fn should_send_tool_specs(&self) -> bool;
 }
 
+/// Whether the system-prompt builder should emit native-tools-style
+/// guidance (no `<tool_call>` XML protocol, no `build_tool_instructions`
+/// XML block) for this run.
+///
+/// Mirrors the dispatcher-selection precedence at `agent::Agent::from_config`
+/// (`"native"` / `"xml"` / `_ -> provider.supports_native_tools()`). Without
+/// this helper, the system-prompt path uses `provider.supports_native_tools()`
+/// alone, which conflicts with the explicit `[agent] tool_dispatcher = "native"`
+/// override: providers that conservatively return `false` from
+/// `supports_native_tools` (e.g. `OllamaProvider`, which defaults to XML
+/// because many Ollama-served models don't support native tool-calling)
+/// cause the system prompt to inject XML protocol instructions even though
+/// the runtime is sending tools natively and parsing `tool_calls` from the
+/// response. Models that support native tool-calling but receive the
+/// conflicting "use `<tool_call>...</tool_call>` XML format" guidance fall
+/// back to chat-mode prose. Downstream Vigil agent hit this on 2026-05-26
+/// after Phase 4 confirmed HEARTBEAT.md was reaching the system prompt
+/// (61492 chars total) but the model still emitted prose with zero native
+/// tool_calls.
+///
+/// Call sites: `crates/zeroclaw-runtime/src/agent/loop_.rs` (2 sites at
+/// the entry points of `run` and `run_tool_call_loop`) and
+/// `crates/zeroclaw-channels/src/orchestrator/mod.rs` (channel-orchestrator
+/// turn-build site). All three previously read
+/// `provider.supports_native_tools()` directly.
+pub fn effective_native_tools(dispatcher_choice: &str, provider_supports: bool) -> bool {
+    match dispatcher_choice {
+        "native" => true,
+        "xml" => false,
+        _ => provider_supports,
+    }
+}
+
 #[derive(Default)]
 pub struct XmlToolDispatcher;
 
@@ -253,6 +286,29 @@ impl ToolDispatcher for NativeToolDispatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `effective_native_tools` must mirror the dispatcher-selection
+    /// precedence at `agent::Agent::from_config`. Catches future drift
+    /// where someone updates one site but not the other.
+    #[test]
+    fn effective_native_tools_truth_table() {
+        // "native" override: always native, regardless of provider capability.
+        assert!(effective_native_tools("native", true));
+        assert!(effective_native_tools("native", false));
+
+        // "xml" override: always XML, regardless of provider capability.
+        assert!(!effective_native_tools("xml", true));
+        assert!(!effective_native_tools("xml", false));
+
+        // "auto" (and any other value): defer to provider.
+        assert!(effective_native_tools("auto", true));
+        assert!(!effective_native_tools("auto", false));
+        // Unrecognized values fall through to provider — same as "auto".
+        assert!(effective_native_tools("nonsense", true));
+        assert!(!effective_native_tools("nonsense", false));
+        assert!(effective_native_tools("", true));
+        assert!(!effective_native_tools("", false));
+    }
 
     #[test]
     fn xml_dispatcher_parses_tool_calls() {
